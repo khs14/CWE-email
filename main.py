@@ -4,7 +4,10 @@ import dns.resolver
 import smtplib
 import re
 import socket
-import concurrent.futures
+from io import BytesIO
+import time
+
+# Email validation functions
 
 
 def is_valid_email_format(email):
@@ -19,7 +22,7 @@ def has_valid_mx_record(domain):
     try:
         if not domain or len(domain) > 255:
             return False
-        answers = dns.resolver.resolve(domain, 'MX')
+        dns.resolver.resolve(domain, 'MX')
         return True
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout, socket.gaierror, UnicodeError):
         return False
@@ -28,31 +31,24 @@ def has_valid_mx_record(domain):
 def smtp_check(email):
     domain = email.split('@')[1]
     try:
-        # Increase timeout for DNS resolution
         mx_records = dns.resolver.resolve(domain, 'MX', lifetime=20)
         mx_record = mx_records[0].exchange.to_text()
-
-        # Connect to the SMTP server
-        # Increase timeout for SMTP connection
         server = smtplib.SMTP(timeout=20)
         server.set_debuglevel(0)
-
         server.connect(mx_record)
         server.helo(server.local_hostname)
         server.mail('test@example.com')
-        code, message = server.rcpt(email)
+        code, _ = server.rcpt(email)
         server.quit()
-
-        # 250 is the code for successful recipient
-        if code == 250:
-            return True
-        else:
-            return False
-    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, smtplib.SMTPResponseException, dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout, socket.gaierror, UnicodeError):
+        return code == 250
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, smtplib.SMTPResponseException, dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout, socket.gaierror, UnicodeError, smtplib.SMTPException) as e:
+        st.write(f"SMTP check failed for {email}: {e}")
         return False
 
 
 def validate_email(email):
+    if email is None:
+        return (email, "Email is None")
     if is_valid_email_format(email):
         domain = email.split('@')[1]
         if not has_valid_mx_record(domain):
@@ -65,22 +61,41 @@ def validate_email(email):
 
 
 def find_duplicates(df_cleaned, columns):
-
-    duplicates = df_cleaned[df_cleaned.duplicated(subset=columns, keep=False)]
-    # Sort by the selected columns to group duplicates together
-    duplicates_sorted = duplicates.sort_values(by=columns)
-    return duplicates_sorted
+    df_temp = df_cleaned.copy()
+    df_temp[columns] = df_temp[columns].apply(
+        lambda x: x.str.strip() if x.dtype == "object" else x)
+    duplicates = df_temp[df_temp.duplicated(subset=columns, keep=False)]
+    return duplicates.sort_values(by=columns)
 
 
 def find_missing_values(df, columns):
-    # Find rows with None or NaN values in the specified columns
-    missing_values = df[df[columns].isnull().any(axis=1)]
-    return missing_values
+    return df[df[columns].isnull().any(axis=1)]
 
 
-st.title("CWE Data Tools")
+def process_email_batch(email_list):
+    invalid_emails = []
+    for email in email_list:
+        try:
+            result = validate_email(email)
+            if result is not None:
+                invalid_emails.append(result)
+        except Exception as e:
+            invalid_emails.append((email, f"Error: {e}"))
+        time.sleep(2)  # Sleep for 2 seconds between each email check
+    return invalid_emails
 
-# File upload
+
+def convert_df_to_excel(dfs, sheetnames):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        for df, sheetname in zip(dfs, sheetnames):
+            df.to_excel(writer, index=False, sheet_name=sheetname)
+    return output.getvalue()
+
+
+# Streamlit UI
+st.title("Data Cleaning Tool")
+
 uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
 
 if uploaded_file is not None:
@@ -88,12 +103,12 @@ if uploaded_file is not None:
     st.write("Uploaded DataFrame:")
     st.write(df)
 
-    # Find the email column
+    # Email Validation Section
+    st.header("Email Validator")
     email_column = st.selectbox(
-        "Select the column containing email addresses", df.columns)
+        "Select the column containing email addresses", df.columns, key="email")
 
     if email_column:
-        # Add a button to start the validation process
         if st.button("Validate Emails"):
             email_list = df[email_column].tolist()
 
@@ -101,51 +116,75 @@ if uploaded_file is not None:
             progress_text = st.empty()
             progress_bar = st.progress(0)
 
-            # Use ThreadPoolExecutor for concurrent email validation
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                futures = {executor.submit(
-                    validate_email, email): email for email in email_list}
-                for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                    result = future.result()
-                    if result is not None:
-                        invalid_emails.append(result)
-                    progress_text.text(
-                        f"Processing: {i+1}/{len(email_list)} emails")
-                    progress_bar.progress((i+1) / len(email_list))
+            result_container = st.empty()
+            total_emails = len(email_list)
 
-            # Display the invalid emails
+            for i, email in enumerate(email_list):
+                batch_invalid_emails = process_email_batch([email])
+                invalid_emails.extend(batch_invalid_emails)
+                progress_text.text(f"Processing: {i + 1}/{total_emails}")
+                progress_bar.progress((i + 1) / total_emails)
+
+                if batch_invalid_emails:
+                    result_container.write("Invalid Emails:")
+                    for email, reason in batch_invalid_emails:
+                        result_container.write(
+                            f"The email '{email}' is invalid: {reason}")
+
             if invalid_emails:
-                st.write("Invalid Emails:")
-                for email, reason in invalid_emails:
-                    st.write(f"The email '{email}' is invalid: {reason}")
+                invalid_emails_df = pd.DataFrame(
+                    invalid_emails, columns=['Email', 'Reason'])
+                excel_data = convert_df_to_excel(
+                    [invalid_emails_df], ["Invalid Emails"])
+                st.download_button(
+                    label="Download Excel of Invalid Emails",
+                    data=excel_data,
+                    file_name='invalid_emails.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
+
+    # Duplicate Check Section
+    st.header("Duplicate Checker")
+    columns_to_check = st.multiselect(
+        "Select columns to check for duplicate values", df.columns, key="duplicates")
+
+    if columns_to_check:
+        if st.button("Check Duplicates"):
+            duplicates = find_duplicates(df, columns_to_check)
+            if not duplicates.empty:
+                st.write("Duplicate Rows:")
+                st.write(duplicates)
+                duplicates_df = duplicates.copy()
+                excel_data = convert_df_to_excel(
+                    [duplicates_df], ["Duplicates"])
+                st.download_button(
+                    label="Download Excel of Duplicate Rows",
+                    data=excel_data,
+                    file_name='duplicates.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
             else:
-                st.write("All emails are valid.")
+                st.write("No duplicate rows found.")
 
-        # Multi-select box for selecting columns to check for duplicates
-        columns_to_check = st.multiselect(
-            "Select columns to check for duplicate values", df.columns)
+    # Missing Value Check Section
+    st.header("Missing Value Finder")
+    columns_to_check_missing = st.multiselect(
+        "Select columns to check for missing values", df.columns, key="missing")
 
-        if columns_to_check:
-            # Add a button to check for duplicates
-            if st.button("Check Duplicates"):
-                duplicates = find_duplicates(df, columns_to_check)
-                if not duplicates.empty:
-                    st.write("Duplicate Rows:")
-                    st.write(duplicates)
-                else:
-                    st.write("No duplicate rows found.")
-
-        # Multi-select box for selecting columns to check for missing values
-        columns_to_check_missing = st.multiselect(
-            "Select columns to check for missing values", df.columns)
-
-        if columns_to_check_missing:
-            # Add a button to check for missing values
-            if st.button("Check Missing Values"):
-                missing_values = find_missing_values(
-                    df, columns_to_check_missing)
-                if not missing_values.empty:
-                    st.write("Rows with Missing Values:")
-                    st.write(missing_values)
-                else:
-                    st.write("No missing values found in the selected columns.")
+    if columns_to_check_missing:
+        if st.button("Check Missing Values"):
+            missing_values = find_missing_values(df, columns_to_check_missing)
+            if not missing_values.empty:
+                st.write("Rows with Missing Values:")
+                st.write(missing_values)
+                missing_values_df = missing_values.copy()
+                excel_data = convert_df_to_excel(
+                    [missing_values_df], ["Missing Values"])
+                st.download_button(
+                    label="Download Excel of Missing Values",
+                    data=excel_data,
+                    file_name='missing_values.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
+            else:
+                st.write("No missing values found in the selected columns.")
