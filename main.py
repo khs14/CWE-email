@@ -81,7 +81,7 @@ def process_email_batch(email_list):
                 invalid_emails.append(result)
         except Exception as e:
             invalid_emails.append((email, f"Error: {e}"))
-        time.sleep(2)  # Sleep for 2 seconds between each email check
+        time.sleep(0.1)  # Sleep for 2 seconds between each email check
     return invalid_emails
 
 
