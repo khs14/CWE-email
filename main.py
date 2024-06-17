@@ -69,7 +69,26 @@ def find_duplicates(df_cleaned, columns):
 
 
 def find_missing_values(df, columns):
-    return df[df[columns].isnull().any(axis=1)]
+    # Define additional patterns to consider as missing values
+    missing_patterns = ['null', 'na', 'none', '--']
+
+    # Function to check if a value is considered missing
+    def is_missing(value):
+        if pd.isnull(value):
+            return True
+        elif isinstance(value, str) and value.lower() in missing_patterns:
+            return True
+        else:
+            return False
+
+    # Apply the function to each column in columns
+    missing_values_mask = df[columns].applymap(is_missing)
+
+    # Filter rows where any of the columns have missing values
+    missing_values = df[missing_values_mask.any(axis=1)]
+
+    return missing_values
+
 
 
 def process_email_batch(email_list):
