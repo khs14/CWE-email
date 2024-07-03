@@ -6,8 +6,7 @@ import re
 import socket
 from io import BytesIO
 import time
-import http.client
-import json
+
 
 # Email validation functions
 
@@ -63,32 +62,6 @@ def validate_email(email):
     return None  # Email passed all existing checks
 
 
-def eva_api_check(email):
-    conn = http.client.HTTPSConnection("api.eva.pingutil.com")
-    try:
-        conn.request("GET", f"/email?email={email}")
-        res = conn.getresponse()
-        data = res.read()
-        result = json.loads(data.decode("utf-8"))
-        return result['data']['valid_syntax'] and result['data']['valid_smtp']
-    except Exception as e:
-        st.write(f"EVA API request failed for {email}: {e}")
-    finally:
-        conn.close()
-    return False
-
-
-def process_failed_emails(failed_emails):
-    validated_emails = []
-    for email, reason in failed_emails:
-        if eva_api_check(email):
-            validated_emails.append((email, "Validated by EVA API"))
-        else:
-            validated_emails.append((email, f"Failed both checks: {reason}"))
-        time.sleep(1)  # Sleep for 1 second between each API call
-    return validated_emails
-
-
 def find_duplicates(df_cleaned, columns):
     df_temp = df_cleaned.copy()
     df_temp[columns] = df_temp[columns].apply(
@@ -128,6 +101,7 @@ st.title("Data Cleaning Tool")
 page = st.sidebar.selectbox("Choose a function", [
                             "Email Validator", "Duplicate Checker", "Missing Value Finder", "Compare Excel Files"])
 
+
 if page == "Email Validator":
     uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
 
@@ -148,37 +122,30 @@ if page == "Email Validator":
                 if st.button("Validate Emails"):
                     email_list = df[email_column].tolist()
 
-                    failed_emails = []
+                    invalid_emails = []
                     progress_text = st.empty()
                     progress_bar = st.progress(0)
 
                     result_container = st.empty()
                     total_emails = len(email_list)
 
-                    # First pass: use existing validation method
                     for i, email in enumerate(email_list):
                         result = validate_email(email)
                         if result is not None:
-                            failed_emails.append(result)
+                            invalid_emails.append(result)
 
-                        progress_text.text(
-                            f"Initial check: {i + 1}/{total_emails}")
+                        progress_text.text(f"Checking: {i + 1}/{total_emails}")
                         progress_bar.progress((i + 1) / total_emails)
 
-                    # Second pass: process failed emails with EVA API
-                    if failed_emails:
-                        progress_text.text(
-                            "Processing failed emails with EVA API...")
-                        validated_emails = process_failed_emails(failed_emails)
-
+                    if invalid_emails:
                         result_container.write("Validation Results:")
-                        for email, status in validated_emails:
+                        for email, status in invalid_emails:
                             result_container.write(
                                 f"Email: {email}, Status: {status}")
 
                         # Create DataFrame for download
                         results_df = pd.DataFrame(
-                            validated_emails, columns=['Email', 'Status'])
+                            invalid_emails, columns=['Email', 'Status'])
                         excel_data = convert_df_to_excel(
                             [results_df], ["Validation Results"])
                         st.download_button(
@@ -189,7 +156,7 @@ if page == "Email Validator":
                         )
                     else:
                         result_container.write(
-                            "All emails passed the initial validation.")
+                            "All emails passed the validation.")
 
 elif page == "Duplicate Checker":
     uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
