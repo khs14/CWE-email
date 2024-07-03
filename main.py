@@ -24,12 +24,9 @@ def has_valid_mx_record(domain):
         if not domain or len(domain) > 255:
             return False
         dns.resolver.resolve(domain, 'MX')
-        time.sleep(0.1)
         return True
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout, socket.gaierror, UnicodeError):
-        time.sleep(0.1)
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout, socket.gaierror, UnicodeError, dns.resolver.NoNameservers):
         return False
-
 
 def smtp_check(email):
     domain = email.split('@')[1]
@@ -43,13 +40,10 @@ def smtp_check(email):
         server.mail('test@example.com')
         code, _ = server.rcpt(email)
         server.quit()
-        time.sleep(0.1)
         return code == 250
     except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, smtplib.SMTPResponseException, dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout, socket.gaierror, UnicodeError, smtplib.SMTPException) as e:
         st.write(f"SMTP check failed for {email}: {e}")
-        time.sleep(0.1)
         return False
-
 
 def validate_email(email):
     if email is None:
