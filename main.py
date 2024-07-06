@@ -37,6 +37,14 @@ def is_valid_email_format(email):
     
     return re.match(pattern, email) is not None
 
+
+def validate_email(email):
+    if email is None:
+        return (email, "Email is None")
+    if not is_valid_email_format(email):
+        return (email, "Invalid format")
+    return None  # Email passed all existing checks
+
 def find_duplicates(df_cleaned, columns):
     df_temp = df_cleaned.copy()
     df_temp[columns] = df_temp[columns].apply(
@@ -78,49 +86,61 @@ page = st.sidebar.selectbox("Choose a function", [
 
 
 
-# Email validation functions
+if page == "Email Validator":
+    uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
 
-def is_valid_email_format(email):
-    if not isinstance(email, str):
-        return False
-    email = email.strip()  # Remove leading/trailing whitespace
-    regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(regex, email) is not None
+    if uploaded_file is not None:
+        xls = pd.ExcelFile(uploaded_file)
+        sheet_name = st.selectbox("Select a sheet", xls.sheet_names)
 
-if st.button("Validate Emails"):
-    email_list = df[email_column].tolist()
+        if sheet_name:
+            df = pd.read_excel(xls, sheet_name=sheet_name)
+            st.write(f"Data from {sheet_name}:")
+            st.write(df)
 
-    invalid_emails = []
-    progress_text = st.empty()
-    progress_bar = st.progress(0)
+            st.header("Email Validator")
+            email_column = st.selectbox(
+                "Select the column containing email addresses", df.columns, key="email")
 
-    result_container = st.empty()
-    total_emails = len(email_list)
+            if email_column:
+                if st.button("Validate Emails"):
+                    email_list = df[email_column].tolist()
 
-    for i, email in enumerate(email_list):
-        result = validate_email(email)
-        if result is not None:
-            invalid_emails.append(result)
+                    invalid_emails = []
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
 
-        progress_text.text(f"Checking: {i + 1}/{total_emails}")
-        progress_bar.progress((i + 1) / total_emails)
+                    result_container = st.empty()
+                    total_emails = len(email_list)
 
-    if invalid_emails:
-        result_container.write("Validation Results:")
-        for email, status in invalid_emails:
-            result_container.write(f"Email: {email}, Status: {status}")
+                    for i, email in enumerate(email_list):
+                        result = validate_email(email)
+                        if result is not None:
+                            invalid_emails.append(result)
 
-        # Create DataFrame for download
-        results_df = pd.DataFrame(invalid_emails, columns=['Email', 'Status'])
-        excel_data = convert_df_to_excel([results_df], ["Validation Results"])
-        st.download_button(
-            label="Download Validation Results",
-            data=excel_data,
-            file_name='email_validation_results.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-    else:
-        result_container.write("All emails passed the validation.")
+                        progress_text.text(f"Checking: {i + 1}/{total_emails}")
+                        progress_bar.progress((i + 1) / total_emails)
+
+                    if invalid_emails:
+                        result_container.write("Validation Results:")
+                        for email, status in invalid_emails:
+                            result_container.write(
+                                f"Email: {email}, Status: {status}")
+
+                        # Create DataFrame for download
+                        results_df = pd.DataFrame(
+                            invalid_emails, columns=['Email', 'Status'])
+                        excel_data = convert_df_to_excel(
+                            [results_df], ["Validation Results"])
+                        st.download_button(
+                            label="Download Validation Results",
+                            data=excel_data,
+                            file_name='email_validation_results.xlsx',
+                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                        )
+                    else:
+                        result_container.write(
+                            "All emails passed the validation.")
 
 elif page == "Duplicate Checker":
     uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
