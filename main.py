@@ -8,57 +8,34 @@ from io import BytesIO
 import time
 
 
-# Email validation functions
-
-
 def is_valid_email_format(email):
     if not isinstance(email, str):
         return False
-    email = email.strip()  # Remove leading/trailing whitespace
-    regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(regex, email) is not None
-
-
-def has_valid_mx_record(domain):
-    try:
-        if not domain or len(domain) > 255:
-            return False
-        dns.resolver.resolve(domain, 'MX')
-        return True
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout, socket.gaierror, UnicodeError, dns.resolver.NoNameservers):
+    
+    email = email.strip().lower()
+    
+    # Check length
+    if len(email) > 254:
         return False
-
-def smtp_check(email):
-    domain = email.split('@')[1]
+    
+    # Split local part and domain
     try:
-        mx_records = dns.resolver.resolve(domain, 'MX', lifetime=20)
-        mx_record = mx_records[0].exchange.to_text()
-        server = smtplib.SMTP(timeout=20)
-        server.set_debuglevel(0)
-        server.connect(mx_record)
-        server.helo(server.local_hostname)
-        server.mail('test@example.com')
-        code, _ = server.rcpt(email)
-        server.quit()
-        return code == 250
-    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, smtplib.SMTPResponseException, dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.Timeout, socket.gaierror, UnicodeError, smtplib.SMTPException) as e:
-        st.write(f"SMTP check failed for {email}: {e}")
+        local_part, domain = email.split('@')
+    except ValueError:
         return False
-
-def validate_email(email):
-    if email is None:
-        return (email, "Email is None")
-    if not is_valid_email_format(email):
-        return (email, "Invalid format")
-
-    domain = email.split('@')[1]
-    if not has_valid_mx_record(domain):
-        return (email, "Invalid MX record")
-    if not smtp_check(email):
-        return (email, "SMTP check failed")
-
-    return None  # Email passed all existing checks
-
+    
+    # Check local part
+    if len(local_part) > 64 or len(local_part) == 0:
+        return False
+    
+    # Check domain
+    if len(domain) > 253 or len(domain) == 0:
+        return False
+    
+    # Comprehensive regex for email validation
+    pattern = r'^[a-z0-9!#$%&\'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&\'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$'
+    
+    return re.match(pattern, email) is not None
 
 def find_duplicates(df_cleaned, columns):
     df_temp = df_cleaned.copy()
@@ -100,61 +77,50 @@ page = st.sidebar.selectbox("Choose a function", [
                             "Email Validator", "Duplicate Checker", "Missing Value Finder", "Compare Excel Files"])
 
 
-if page == "Email Validator":
-    uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
 
-    if uploaded_file is not None:
-        xls = pd.ExcelFile(uploaded_file)
-        sheet_name = st.selectbox("Select a sheet", xls.sheet_names)
+# Email validation functions
 
-        if sheet_name:
-            df = pd.read_excel(xls, sheet_name=sheet_name)
-            st.write(f"Data from {sheet_name}:")
-            st.write(df)
+def is_valid_email_format(email):
+    if not isinstance(email, str):
+        return False
+    email = email.strip()  # Remove leading/trailing whitespace
+    regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(regex, email) is not None
 
-            st.header("Email Validator")
-            email_column = st.selectbox(
-                "Select the column containing email addresses", df.columns, key="email")
+if st.button("Validate Emails"):
+    email_list = df[email_column].tolist()
 
-            if email_column:
-                if st.button("Validate Emails"):
-                    email_list = df[email_column].tolist()
+    invalid_emails = []
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
 
-                    invalid_emails = []
-                    progress_text = st.empty()
-                    progress_bar = st.progress(0)
+    result_container = st.empty()
+    total_emails = len(email_list)
 
-                    result_container = st.empty()
-                    total_emails = len(email_list)
+    for i, email in enumerate(email_list):
+        result = validate_email(email)
+        if result is not None:
+            invalid_emails.append(result)
 
-                    for i, email in enumerate(email_list):
-                        result = validate_email(email)
-                        if result is not None:
-                            invalid_emails.append(result)
+        progress_text.text(f"Checking: {i + 1}/{total_emails}")
+        progress_bar.progress((i + 1) / total_emails)
 
-                        progress_text.text(f"Checking: {i + 1}/{total_emails}")
-                        progress_bar.progress((i + 1) / total_emails)
+    if invalid_emails:
+        result_container.write("Validation Results:")
+        for email, status in invalid_emails:
+            result_container.write(f"Email: {email}, Status: {status}")
 
-                    if invalid_emails:
-                        result_container.write("Validation Results:")
-                        for email, status in invalid_emails:
-                            result_container.write(
-                                f"Email: {email}, Status: {status}")
-
-                        # Create DataFrame for download
-                        results_df = pd.DataFrame(
-                            invalid_emails, columns=['Email', 'Status'])
-                        excel_data = convert_df_to_excel(
-                            [results_df], ["Validation Results"])
-                        st.download_button(
-                            label="Download Validation Results",
-                            data=excel_data,
-                            file_name='email_validation_results.xlsx',
-                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                        )
-                    else:
-                        result_container.write(
-                            "All emails passed the validation.")
+        # Create DataFrame for download
+        results_df = pd.DataFrame(invalid_emails, columns=['Email', 'Status'])
+        excel_data = convert_df_to_excel([results_df], ["Validation Results"])
+        st.download_button(
+            label="Download Validation Results",
+            data=excel_data,
+            file_name='email_validation_results.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    else:
+        result_container.write("All emails passed the validation.")
 
 elif page == "Duplicate Checker":
     uploaded_file = st.file_uploader("Choose an Excel file", type="xlsx")
