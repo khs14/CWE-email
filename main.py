@@ -70,7 +70,7 @@ def convert_df_to_excel(dfs, sheetnames):
 
 
 # Streamlit UI
-st.title("Data Cleaning Tool")
+st.title("CWE Data Cleaning Tool")
 
 # Sidebar for navigation
 page = st.sidebar.selectbox("Choose a function", [
